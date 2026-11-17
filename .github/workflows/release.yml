@@ -1,0 +1,61 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  GODOT_VERSION: 4.7.2-stable
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: launcher/go.mod
+
+      - name: Build launcher
+        working-directory: launcher
+        env:
+          CGO_ENABLED: "0"
+          GOARCH: amd64
+        run: |
+          mkdir -p ../dist
+          GOOS=windows go build -trimpath -ldflags "-s -w" -o ../dist/theGame.exe .
+          GOOS=linux go build -trimpath -ldflags "-s -w" -o ../dist/theGame-linux .
+
+      - name: Install Godot and export templates
+        run: |
+          base="https://github.com/godotengine/godot/releases/download/$GODOT_VERSION"
+          curl -fsSL -o godot.zip "$base/Godot_v${GODOT_VERSION}_linux.x86_64.zip"
+          curl -fsSL -o templates.tpz "$base/Godot_v${GODOT_VERSION}_export_templates.tpz"
+          unzip -q godot.zip -d "$RUNNER_TEMP"
+          ln -s "$RUNNER_TEMP/Godot_v${GODOT_VERSION}_linux.x86_64" "$RUNNER_TEMP/godot"
+          templates="$HOME/.local/share/godot/export_templates/${GODOT_VERSION/-/.}"
+          mkdir -p "$templates"
+          unzip -q -j templates.tpz -d "$templates"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: Export game
+        run: |
+          sed -i "s|^config/version=.*|config/version=\"${GITHUB_REF_NAME#v}\"|" game/project.godot
+          godot --headless --path game --import
+          mkdir -p build/windows build/linux
+          godot --headless --path game --export-release Windows "$PWD/build/windows/game.exe"
+          godot --headless --path game --export-release Linux "$PWD/build/linux/game.x86_64"
+          # Godot can exit 0 after a failed export.
+          test -s build/windows/game.exe && test -s build/linux/game.x86_64
+          (cd build/windows && zip -qr ../../dist/game-windows.zip .)
+          (cd build/linux && zip -qr ../../dist/game-linux.zip .)
+          echo "$GITHUB_REF_NAME" > dist/version.txt
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes

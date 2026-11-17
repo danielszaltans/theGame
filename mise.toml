@@ -1,0 +1,5 @@
+[tools]
+go = "latest"
+godot = "4.7.2-stable"
+rust = "stable"
+zig = "0.13.0"

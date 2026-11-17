@@ -2,14 +2,25 @@ extends CharacterBody3D
 
 const SPEED := 7.0
 const TURN_SPEED := 12.0
+const GRAVITY := 20.0
+# Clears a crate (1.2 m) but not a platform (2.4 m), so crates work as steps.
+const JUMP_SPEED := 7.6
 
-# Dev flag: walk in a straight line without input, for headless network tests.
+# Dev flag: wander without input, for headless network tests.
 static var bot := false
+
+# Both are decided by the host and arrive with the game state.
+var speed_scale := 1.0
+var downed := false
+
+var _spawn: Vector3
+var _visual: Node3D
 
 
 func setup(id: int, display_name: String, start: Vector3) -> void:
 	name = str(id)
 	position = start
+	_spawn = start
 
 	var capsule := CapsuleMesh.new()
 	capsule.radius = 0.4
@@ -20,7 +31,6 @@ func setup(id: int, display_name: String, start: Vector3) -> void:
 	var body := MeshInstance3D.new()
 	body.mesh = capsule
 	body.position.y = 0.9
-	add_child(body)
 
 	var nose_mesh := BoxMesh.new()
 	nose_mesh.size = Vector3(0.25, 0.25, 0.5)
@@ -28,7 +38,11 @@ func setup(id: int, display_name: String, start: Vector3) -> void:
 	var nose := MeshInstance3D.new()
 	nose.mesh = nose_mesh
 	nose.position = Vector3(0, 1.3, 0.45)
-	add_child(nose)
+
+	_visual = Node3D.new()
+	_visual.add_child(body)
+	_visual.add_child(nose)
+	add_child(_visual)
 
 	var shape := CapsuleShape3D.new()
 	shape.radius = 0.4
@@ -60,6 +74,19 @@ func setup(id: int, display_name: String, start: Vector3) -> void:
 	set_multiplayer_authority(id)
 
 
+func set_downed(value: bool) -> void:
+	if downed == value:
+		return
+	downed = value
+	_visual.rotation.x = -PI / 2 if downed else 0.0
+	_visual.position.y = 0.4 if downed else 0.0
+
+
+func respawn() -> void:
+	position = _spawn
+	velocity = Vector3.ZERO
+
+
 func _physics_process(delta: float) -> void:
 	if not is_multiplayer_authority():
 		return
@@ -68,9 +95,16 @@ func _physics_process(delta: float) -> void:
 		float(_pressed(KEY_S, KEY_DOWN)) - float(_pressed(KEY_W, KEY_UP)),
 	)
 	if bot:
-		input = Vector2.RIGHT
+		input = Vector2.from_angle(Time.get_ticks_msec() / 2000.0)
+	if downed:
+		input = Vector2.ZERO
 	var direction := Vector3(input.x, 0, input.y).limit_length(1.0)
-	velocity = direction * SPEED
+	velocity.x = direction.x * SPEED * speed_scale
+	velocity.z = direction.z * SPEED * speed_scale
+	if is_on_floor():
+		velocity.y = JUMP_SPEED if Input.is_physical_key_pressed(KEY_SPACE) and not downed else 0.0
+	else:
+		velocity.y -= GRAVITY * delta
 	move_and_slide()
 	if direction != Vector3.ZERO:
 		rotation.y = lerp_angle(rotation.y, atan2(direction.x, direction.z), TURN_SPEED * delta)

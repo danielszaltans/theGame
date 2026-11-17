@@ -1,23 +1,19 @@
 extends Node3D
 
 const Player := preload("res://player.gd")
+const Arena := preload("res://arena.gd")
+const Swarm := preload("res://swarm.gd")
+const Game := preload("res://game.gd")
+const Hud := preload("res://hud.gd")
 
 const PORT := 24565
 const MAX_PLAYERS := 6
 const CAMERA_OFFSET := Vector3(0, 16, 12)
-const GROUND_SHADER := """
-shader_type spatial;
-varying vec3 world;
-void vertex() { world = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz; }
-void fragment() {
-	float checker = mod(floor(world.x / 2.0) + floor(world.z / 2.0), 2.0);
-	ALBEDO = mix(vec3(0.20, 0.29, 0.19), vec3(0.24, 0.34, 0.22), checker);
-}
-"""
 
 var version: String = ProjectSettings.get_setting("application/config/version", "dev")
 var kick_reason := ""
 
+var game: Node
 var players: Node3D
 var spawner: MultiplayerSpawner
 var camera: Camera3D
@@ -46,7 +42,7 @@ func _process(_delta: float) -> void:
 		camera.position = me.position + CAMERA_OFFSET
 	if hud.visible:
 		var role := "hosting on UDP port %d" % PORT if multiplayer.is_server() else "connected"
-		hud_label.text = "theGame v%s · %d/%d players · %s" % [version, players.get_child_count(), MAX_PLAYERS, role]
+		hud_label.text = "v%s · %d/%d players · %s" % [version, players.get_child_count(), MAX_PLAYERS, role]
 
 
 func _host() -> void:
@@ -55,6 +51,7 @@ func _host() -> void:
 		status.text = "Could not host: UDP port %d is already in use." % PORT
 		return
 	multiplayer.multiplayer_peer = peer
+	game.start_hosting()
 	_add_player(1, _my_name())
 	_show_game(true)
 
@@ -73,7 +70,8 @@ func _join(address: String) -> void:
 
 
 func _leave(message := "") -> void:
-	multiplayer.multiplayer_peer = null
+	multiplayer.multiplayer_peer = OfflineMultiplayerPeer.new()
+	game.stop()
 	for player in players.get_children():
 		player.queue_free()
 	_show_game(false)
@@ -140,36 +138,9 @@ func _show_game(in_game: bool) -> void:
 
 
 func _build_world() -> void:
-	var sun := DirectionalLight3D.new()
-	sun.rotation_degrees = Vector3(-55, 35, 0)
-	sun.shadow_enabled = true
-	add_child(sun)
-
-	var sky := Environment.new()
-	sky.background_mode = Environment.BG_COLOR
-	sky.background_color = Color(0.07, 0.09, 0.11)
-	sky.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	sky.ambient_light_color = Color(0.55, 0.6, 0.7)
-	sky.ambient_light_energy = 0.6
-	var environment := WorldEnvironment.new()
-	environment.environment = sky
-	add_child(environment)
-
-	var shader := Shader.new()
-	shader.code = GROUND_SHADER
-	var ground_material := ShaderMaterial.new()
-	ground_material.shader = shader
-	var plane := PlaneMesh.new()
-	plane.size = Vector2(200, 200)
-	plane.material = ground_material
-	var ground_mesh := MeshInstance3D.new()
-	ground_mesh.mesh = plane
-	var ground_collider := CollisionShape3D.new()
-	ground_collider.shape = WorldBoundaryShape3D.new()
-	var ground := StaticBody3D.new()
-	ground.add_child(ground_mesh)
-	ground.add_child(ground_collider)
-	add_child(ground)
+	var arena := Arena.new()
+	arena.name = "Arena"
+	add_child(arena)
 
 	camera = Camera3D.new()
 	camera.fov = 40
@@ -186,6 +157,23 @@ func _build_world() -> void:
 	spawner.spawn_function = _spawn_player
 	add_child(spawner)
 	spawner.spawn_path = spawner.get_path_to(players)
+
+	var swarm := Swarm.new()
+	swarm.name = "Swarm"
+	swarm.arena = arena
+	game = Game.new()
+	game.name = "Game"
+	game.swarm = swarm
+	game.arena = arena
+	game.players = players
+	game.camera = camera
+	swarm.game = game
+	add_child(swarm)
+	add_child(game)
+
+	var game_hud := Hud.new()
+	game_hud.game = game
+	add_child(game_hud)
 
 
 func _build_menu() -> void:
@@ -255,7 +243,7 @@ func _build_hud() -> void:
 	hud.add_child(hud_label)
 
 
-# Dev flags, passed after "--": --name=X, --host, --join=ADDRESS, --bot, --dump
+# Dev flags, passed after "--": --name=X, --host, --join=ADDRESS, --bot, --dump=SECONDS
 func _run_dev_flags() -> void:
 	var args := OS.get_cmdline_user_args()
 	for arg in args:
@@ -267,8 +255,11 @@ func _run_dev_flags() -> void:
 			_host()
 		elif arg.begins_with("--join="):
 			_join(arg.trim_prefix("--join="))
-	if "--dump" in args:
-		await get_tree().create_timer(4.0).timeout
+	for arg in args:
+		if not arg.begins_with("--dump="):
+			continue
+		await get_tree().create_timer(float(arg.trim_prefix("--dump="))).timeout
 		for player in players.get_children():
 			print("dump %s %s" % [player.name, player.position.snapped(Vector3.ONE * 0.1)])
+		print("dump state %s, %d zombies drawn" % [game.view, maxi(game.swarm.zombies.size(), game.swarm.views.size())])
 		get_tree().quit()

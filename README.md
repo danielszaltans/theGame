@@ -11,7 +11,15 @@ Download the launcher once and start the game with it every time. It updates the
 - **Linux:** [theGame-linux](https://github.com/danielszaltans/theGame/releases/latest/download/theGame-linux),
   then `chmod +x theGame-linux && ./theGame-linux`.
 
-Move with WASD or the arrow keys.
+## Controls
+
+- **WASD / arrows:** move. **Space:** jump (crates are steps up to the platforms).
+- Your gun fires by itself at the nearest zombies.
+- **Left click:** blast at the mouse position. It throws zombies back and off whatever they climbed.
+- **1 / 2 / 3** or click: pick an upgrade when the team levels up.
+- Stand next to a downed teammate for 3 seconds to revive them.
+
+A boss arrives at 5:00. After it dies the run continues endlessly.
 
 ## Playing together
 
